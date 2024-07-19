@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/mros_pico_bridge.dir/src/main.cpp.o -o mros_pico_bridge  /usr/local/lib/mros/libkineval.a /usr/local/lib/mros/liblinalg.a /usr/local/lib/mros/libmros.a /usr/local/lib/mros/libmros_priv_msgs.a /usr/local/lib/mros/libmsgs.a /usr/local/lib/mros/libsmem.a /usr/local/lib/mros/libsocket.a /usr/local/lib/mros/libutils.a /usr/lib/aarch64-linux-gnu/libpthread.so 
