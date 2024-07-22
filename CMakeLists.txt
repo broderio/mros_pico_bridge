@@ -8,6 +8,6 @@ find_library(PTHREAD pthread REQUIRED)
 
 find_package(mros REQUIRED)
 
-add_executable(mros_pico_bridge src/main.cpp)
-target_include_directories(mros_pico_bridge PRIVATE ${MROS_INCLUDE_DIRS})
+add_executable(mros_pico_bridge src/main.cpp src/mbotSerialBridge.cpp)
+target_include_directories(mros_pico_bridge PRIVATE include ${MROS_INCLUDE_DIRS})
 target_link_libraries(mros_pico_bridge ${MROS_LIBRARIES} ${PTHREAD})
