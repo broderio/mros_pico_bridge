@@ -2,8 +2,41 @@
 
 MbotSerialBridge::MbotSerialBridge() : node("serial_bridge", URI("0.0.0.0", MEDIATOR_PORT_NUM))
 {
+    mros::Console::log(mros::LogLevel::DEBUG, "Opening serial port ... ");
     serialDevice = open("/dev/mbot_lcm", O_RDWR);
+    if (serialDevice < 0)
+    {
+        mros::Console::log(mros::LogLevel::ERROR, "Unable to open serial port.");
+        throw std::runtime_error("Unable to open serial port.");
+    }
+    mros::Console::log(mros::LogLevel::DEBUG, "Serial port opened!");
 
+    struct termios options;
+    tcgetattr(serialDevice, &options);
+    cfsetspeed(&options, B115200);
+    options.c_cflag &= ~(CSIZE | PARENB | CSTOPB | CRTSCTS);
+    options.c_cflag |= CS8 | CREAD | CLOCAL;
+    options.c_oflag &= ~OPOST;
+    options.c_lflag &= ~(ICANON | ISIG | ECHO | IEXTEN); /* Set non-canonical mode */
+    options.c_cc[VTIME] = 1;
+    options.c_cc[VMIN] = 0;
+    cfmakeraw(&options);
+    tcflush(serialDevice, TCIFLUSH);
+    tcsetattr(serialDevice, TCSANOW, &options);
+    if(tcgetattr(serialDevice, &options) != 0)
+    {
+        mros::Console::log(mros::LogLevel::ERROR, "Unable to set serial port attributes.");
+        throw std::runtime_error("Unable to set serial port attributes.");
+    }
+
+    int flags = fcntl(serialDevice, F_GETFL, 0); 
+    if (fcntl(serialDevice, F_SETFL, flags | O_NONBLOCK) < 0)
+    {
+        mros::Console::log(mros::LogLevel::ERROR, "Unable to set serial port to non-blocking mode.");
+        throw std::runtime_error("Unable to set serial port to non-blocking mode.");
+    }
+
+    mros::Console::log(mros::LogLevel::DEBUG, "Creating publishers ... ");
     odometryPub = node.advertise<mbot_msgs::Pose2D>("odometry", 10);
     imuPub = node.advertise<mbot_msgs::MbotImu>("imu", 10);
     encodersPub = node.advertise<mbot_msgs::Encoders>("encoders", 10);
@@ -11,6 +44,7 @@ MbotSerialBridge::MbotSerialBridge() : node("serial_bridge", URI("0.0.0.0", MEDI
     motorVelPub = node.advertise<mbot_msgs::MotorVel>("motor_vel", 10);
     motorPwmPub = node.advertise<mbot_msgs::MotorPwm>("motor_pwm", 10);
 
+    mros::Console::log(mros::LogLevel::DEBUG, "Creating subscribers ... ");
     timesyncSub = node.subscribe<mbot_msgs::Timestamp>("timesync", 10, std::bind(&MbotSerialBridge::timesyncCallback, this, std::placeholders::_1));
     odometryResetSub = node.subscribe<mbot_msgs::Pose2D>("odometry_reset", 10, std::bind(&MbotSerialBridge::odometryResetCallback, this, std::placeholders::_1));
     encodersResetSub = node.subscribe<mbot_msgs::Encoders>("encoders_reset", 10, std::bind(&MbotSerialBridge::encodersResetCallback, this, std::placeholders::_1));
@@ -27,38 +61,44 @@ MbotSerialBridge::~MbotSerialBridge()
 
 void MbotSerialBridge::timesyncCallback(const mbot_msgs::Timestamp &msg)
 {
+    std::string msgStr = Parser::encode(msg, MBOT_TIMESYNC);
     std::lock_guard<std::mutex> lock(serialMutex);
-    write(serialDevice, &msg, sizeof(msg));
+    write(serialDevice, msgStr.c_str(), sizeof(msgStr));
 }
 
 void MbotSerialBridge::odometryResetCallback(const mbot_msgs::Pose2D &msg)
 {
+    std::string msgStr = Parser::encode(msg, MBOT_ODOMETRY_RESET);
     std::lock_guard<std::mutex> lock(serialMutex);
-    write(serialDevice, &msg, sizeof(msg));
+    write(serialDevice, msgStr.c_str(), sizeof(msgStr));
 }
 
 void MbotSerialBridge::encodersResetCallback(const mbot_msgs::Encoders &msg)
 {
+    std::string msgStr = Parser::encode(msg, MBOT_ENCODERS_RESET);
     std::lock_guard<std::mutex> lock(serialMutex);
-    write(serialDevice, &msg, sizeof(msg));
+    write(serialDevice, msgStr.c_str(), sizeof(msgStr));
 }
 
 void MbotSerialBridge::motorPwmCmdCallback(const mbot_msgs::MotorPwm &msg)
 {
+    std::string msgStr = Parser::encode(msg, MBOT_MOTOR_PWM);
     std::lock_guard<std::mutex> lock(serialMutex);
-    write(serialDevice, &msg, sizeof(msg));
+    write(serialDevice, msgStr.c_str(), sizeof(msgStr));
 }
 
 void MbotSerialBridge::motorVelCmdCallback(const mbot_msgs::MotorVel &msg)
 {
+    std::string msgStr = Parser::encode(msg, MBOT_MOTOR_VEL);
     std::lock_guard<std::mutex> lock(serialMutex);
-    write(serialDevice, &msg, sizeof(msg));
+    write(serialDevice, msgStr.c_str(), sizeof(msgStr));
 }
 
 void MbotSerialBridge::mbotVelCmdCallback(const mbot_msgs::Twist2D &msg)
 {
+    std::string msgStr = Parser::encode(msg, MBOT_VEL_CMD);
     std::lock_guard<std::mutex> lock(serialMutex);
-    write(serialDevice, &msg, sizeof(msg));
+    write(serialDevice, msgStr.c_str(), sizeof(msgStr));
 }
 
 bool MbotSerialBridge::readHeader(uint8_t *headerData)
@@ -72,6 +112,10 @@ bool MbotSerialBridge::readHeader(uint8_t *headerData)
         {
             return -1;
         }
+    }
+    if (!node.ok())
+    {
+        return -1;
     }
     headerData[0] = triggerVal;
 
@@ -130,7 +174,8 @@ bool MbotSerialBridge::validateMessage(uint8_t *headerData, uint8_t *msgDataSeri
 
 void MbotSerialBridge::handleMessage(uint8_t *msgDataSerialized, uint16_t msgLen, uint16_t topicId)
 {
-    std::string msgStr((char*)msgDataSerialized);
+    std::string msgStr;
+    msgStr.assign((char *)msgDataSerialized, msgLen);
 
     switch (topicId)
     {
@@ -190,20 +235,40 @@ uint8_t MbotSerialBridge::checksum(uint8_t* addends, int len) {
     return 255 - ( ( sum ) % 256 );
 }
 
+void MbotSerialBridge::timesyncThread()
+{
+    while (node.ok())
+    {
+        mbot_msgs::Timestamp msg;
+        struct timeval tv;
+        gettimeofday (&tv, NULL);
+        msg.utime = (int64_t) tv.tv_sec * 1000000 + tv.tv_usec;
+        timesyncCallback(msg);
+        sleep(1000);
+    }
+
+}
+
 void MbotSerialBridge::run()
 {
+    mros::Console::log(mros::LogLevel::DEBUG, "Spinning node ...");
     node.spin(true);
+
+    mros::Console::log(mros::LogLevel::DEBUG, "Starting timesync thread ...");
+    std::thread timesyncThreadHandler(&MbotSerialBridge::timesyncThread, this);
+    timesyncThreadHandler.detach();
 
     uint8_t headerData[ROS_HEADER_LENGTH];
     headerData[0] = 0x00;
     while (node.ok())
-    {
+    {   
         // Read the header and check if we lost serial connection
         int headerStatus = readHeader(headerData);
         if (headerStatus < 0)
         {
-            fprintf(stderr, "[ERROR] Serial device is not available, exiting thread to attempt reconnect...\n");
-            break; // Break the loop if the device is not available
+            // fprintf(stderr, "[ERROR] Serial device is not available, exiting thread to attempt reconnect...\n");
+            mros::Console::log(mros::LogLevel::ERROR, "Serial device is not available, exiting thread to attempt reconnect...");
+            continue; // Break the loop if the device is not available
         }
 
         bool validHeader = (headerStatus == 1);
@@ -235,8 +300,9 @@ void MbotSerialBridge::run()
             int msgStatus = readMessage(msgDataSerialized, msgLen, &topicMsgDataChecksum);
             if (msgStatus < 0)
             {
-                fprintf(stderr, "[ERROR] Serial device is not available, exiting thread to attempt reconnect...\n");
-                break; // Break the loop if the device is not available
+                // fprintf(stderr, "[ERROR] Serial device is not available, exiting thread to attempt reconnect...\n");
+                mros::Console::log(mros::LogLevel::ERROR, "Serial device is not available, exiting thread to attempt reconnect...");
+                continue; // Break the loop if the device is not available
             }
 
             bool validMsg = (msgStatus == 1);

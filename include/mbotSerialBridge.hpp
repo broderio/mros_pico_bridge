@@ -1,6 +1,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <thread>
 
 #include <stdio.h>
 #include <stdint.h>
@@ -8,6 +9,10 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <sys/time.h>
+
+#include <fcntl.h> // Contains file controls like O_RDWR
+#include <errno.h> // Error integer and strerror() function
+#include <termios.h> // Contains POSIX terminal control definitions
 
 #include "utils.hpp"
 #include "mros/node.hpp"
@@ -68,6 +73,9 @@ class MbotSerialBridge
         bool validateMessage(uint8_t* headerData, uint8_t* msgDataSerialized, uint16_t msgLen, char topicMsgDataChecksum);
         void handleMessage(uint8_t* msgDataSerialized, uint16_t msgLen, uint16_t topicId);
         uint8_t checksum(uint8_t* addends, int len);
+
+        // Thread for sending timesync messages over serial
+        void timesyncThread();
 
         int serialDevice;
         std::mutex serialMutex;
